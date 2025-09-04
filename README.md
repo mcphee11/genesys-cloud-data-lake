@@ -17,8 +17,6 @@ For the `permissions` required I have broken them down into both Permissions as 
 ### Permissions:
 ```
 analytics:datawarehouse:view
-users
-routing
 ```
 ### Scopes:
 ```
@@ -49,13 +47,13 @@ Also make sure you have [Golang](https://go.dev/doc/install) installed and setup
 
 ## Step 3 - Deploy Cloud Functions
 
-There are 2x Google Cloud functions that need to be deployed. Both are located in this repository and are in separate folders. To make my life easier I create files called deploy.sh run.sh & trigger.sh. These will not appear in the repository as they are part of the `.gcloudignore` as they include ids. You can run these function locally before deploying them to the cloud if you wish to test locally first.
+There is one Google Cloud function that needs to be deployed. This is located in this repository in a separate folder. To make my life easier I create files called deploy.sh run.sh & trigger.sh. These will not appear in the repository as they are part of the `.gitignore` as they include ids. You can run these function locally before deploying them to the cloud if you wish to test locally first.
 
 As I'm based in Australia I am deploying the function into the `australia-southeast1` region. You can change this to be a different region based on where you are.
 
 ### datalake-get-data
 
-Before deploying the first function ensure you have done the above steps including creating the `Topic` in Pub/Sub.
+Before deploying the function ensure you have done the above steps including creating the `Topic` in Pub/Sub.
 
 Ensure you are inside the ./datalake-get-data Dir then run the below command with updating the parameters to be based on your environment. `NOTE:` I have set this to 4GiB memory depending on your file sizes you can configure this, you will see in the logs if you need more.
 
