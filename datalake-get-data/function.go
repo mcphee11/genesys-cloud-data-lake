@@ -273,9 +273,6 @@ func importParquetFiles(projectID, datasetID, tableID, gcsPath string, wg *sync.
 	gcsRef := bigquery.NewGCSReference(gcsPath)
 	gcsRef.SourceFormat = bigquery.Parquet
 
-	if strings.Contains(gcsPath, "conversations_") {
-		gcsRef.Schema = createConversationsParquetSchema()
-	}
 	loader := client.Dataset(datasetID).Table(tableID).LoaderFrom(gcsRef)
 	loader.WriteDisposition = bigquery.WriteAppend
 
