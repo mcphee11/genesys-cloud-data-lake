@@ -129,6 +129,27 @@ func datalakeStart(ctx context.Context, e event.Event) error {
 	wgDel.Wait()
 	totalDurationDel := time.Since(totalStartTimeDel)
 	fmt.Printf("Totally finished deleting files in %s\n", totalDurationDel)
+
+	// Clean bigQuery tables and add date formatting...
+	var wgSQL sync.WaitGroup
+	totalStartTimeSQL := time.Now()
+	for _, typ := range uniqueTypesFound {
+		// Check for specific table for now only doing conversations & segments tables
+		if typ == "conversations" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), "conversationId", "updateTimeStamp", "conversationStartDate", "conversationStart", &wgSQL)
+		}
+		if typ == "segments" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), "conversationId", "updateTimeStamp", "segmentStartDate", "segmentStart", &wgSQL)
+		}
+	}
+	wgSQL.Wait()
+	totalDurationSQL := time.Since(totalStartTimeSQL)
+	fmt.Printf("Totally finished cleaning SQL tables in %s\n", totalDurationSQL)
+
 	return nil
 }
 
@@ -321,5 +342,92 @@ func deleteFolder(ctx context.Context, bucketName, folderPath string, wg *sync.W
 		}
 	}
 	fmt.Printf("Folder %q and its contents deleted from bucket %q\n", folderPath, bucketName)
+	return nil
+}
+
+func cleanData(projectID, dataSetID, tableID, uuid, updateTimeStamp, newColumn, newColumnDataSource string, wg *sync.WaitGroup) error {
+	defer wg.Done()
+	// FULL NOTICE. I'm not a SQL developer the below was ill admit generated with help from AI. If there are improvments to this please do a PR'
+	sqlQuery := fmt.Sprintln("\n" +
+		"-- This query first cleans the table by removing older duplicate rows (limited to the 5000 latest rows),\n" +
+		"-- then adds and populates a new `DATETIME` column efficiently.\n" +
+		"-- The BEGIN and END block treats all statements as a single, multi-statement script.\n" +
+		"BEGIN \n" +
+		" -- Part 1: Declare and set variables at the beginning of the script.\n" +
+		" DECLARE column_exists BOOL;\n" +
+		" DECLARE ts_cutoff INT64 DEFAULT 0; -- New variable for the 5000-row cutoff timestamp\n" +
+		" -- Check if the newColumn column already exists in the table's INFORMATION_SCHEMA.\n" +
+		" SET column_exists = (\n" +
+		"   SELECT\n" +
+		"     COUNT(*) > 0\n" +
+		"   FROM\n" +
+		"     `" + projectID + "." + dataSetID + "`.INFORMATION_SCHEMA.COLUMNS\n" +
+		"   WHERE\n" +
+		"     table_name = '" + tableID + "' AND column_name = '" + newColumn + "'\n" +
+		" );\n" +
+		"\n" +
+		" -- Determine the timestamp cutoff for limiting the deduplication scan.\n" +
+		" -- This finds the updateTimeStamp of the 5000th most recent row.\n" +
+		" SET ts_cutoff = COALESCE(\n" +
+		"(\n" +
+		"   SELECT\n" +
+		"     " + updateTimeStamp + "\n" +
+		"   FROM\n" +
+		"     `" + projectID + "." + dataSetID + "." + tableID + "`\n" +
+		"   ORDER BY\n" +
+		"     " + updateTimeStamp + " DESC\n" +
+		"   LIMIT 1 OFFSET 4999\n" +
+		"),\n" +
+		"0\n" +
+		" );\n" +
+		"\n" +
+		" -- Part 2: Remove duplicate rows, keeping only the latest version, LIMITED TO THE 5000 MOST RECENT ROWS.\n" +
+		" -- This DELETE logic is now simplified to ensure only older duplicate rows are removed.\n" +
+		" DELETE FROM `" + projectID + "." + dataSetID + "." + tableID + "` AS T\n" +
+		" WHERE\n" +
+		"   -- 1. Ensure we only consider rows within the most recent 5000 block for deletion.\n" +
+		"   T." + updateTimeStamp + " >= ts_cutoff\n" +
+		"   -- 2. Delete the row (T) if a newer row (T2) with the same conversationId exists\n" +
+		"   --    within the same 5000-row block.\n" +
+		"   AND EXISTS (\n" +
+		"     SELECT 1\n" +
+		"     FROM `" + projectID + "." + dataSetID + "." + tableID + "` AS T2\n" +
+		"     WHERE\n" +
+		"       T2." + uuid + " = T." + uuid + "\n" +
+		"       -- T2 must have a strictly higher (newer) timestamp than T.\n" +
+		"       AND T2." + updateTimeStamp + " > T." + updateTimeStamp + "\n" +
+		"       -- T2 must also be within the 5000-row cutoff block (for safety/consistency)\n" +
+		"       AND T2." + updateTimeStamp + " >= ts_cutoff\n" +
+		"   );\n" +
+		"\n" +
+		" -- Part 3: Add the new column if it doesn't already exist.\n" +
+		" IF NOT column_exists THEN\n" +
+		"     ALTER TABLE `" + projectID + "." + dataSetID + "." + tableID + "`\n" +
+		"     ADD COLUMN " + newColumn + " DATETIME;\n" +
+		" END IF;\n" +
+		"\n" +
+		" -- Part 4: Populate the new column with the DATETIME value. (OPTIMIZED)\n" +
+		" -- The WHERE clause ensures that only newly added rows (which have a NULL value\n" +
+		" -- in the new column) are processed, saving significant cost and time on subsequent runs.\n" +
+		" UPDATE `" + projectID + "." + dataSetID + "." + tableID + "`\n" +
+		" SET " + newColumn + " = DATETIME(TIMESTAMP_MILLIS(" + newColumnDataSource + "))\n" +
+		" WHERE " + newColumn + " IS NULL;\n" +
+		"\n" +
+		"END;")
+
+	ctx := context.Background()
+	client, err := bigquery.NewClient(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("bigquery.NewClient: %v", err)
+	}
+	defer client.Close()
+
+	q := client.Query(sqlQuery)
+	_, err = q.Read(ctx)
+	if err != nil {
+		fmt.Printf("Error cleaning via SQL: %s", err)
+		return err
+	}
+
 	return nil
 }
