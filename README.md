@@ -97,4 +97,17 @@ When you look at the cloud function logs depending on the amount of data you are
 
 Open up Google [Looker Studio](https://lookerstudio.google.com/navigation/reporting) Create a new `Blank Report` then add a Data Source. By default a new report should open up the default selection options including `BigQuery` where we have already put out data.
 
+If your using Google Looker Studio as I am you will want to create a `Add calculated field` in your local timezone to then filter the report based on a DATETIME not just the INT64 UNIX time that comes from the export directly. I did debate doing this at the Database level but then you cant dynamiclly add additional timezones as well as some admins may be in different locations. So instead you can do this on the BI side easy enough.
+
+When you add the calculated field you will need to use this formula:
+
+```
+DATETIME_ADD(PARSE_DATETIME("%s", CAST(FLOOR(conversationStart/1000) AS TEXT)), INTERVAL DATETIME_DIFF(CURRENT_DATETIME("Australia/Melbourne"), CURRENT_DATETIME("UTC"), HOUR) HOUR)
+```
+
+Simply replace the time zone with the one you require based on [IANA](https://www.iana.org/time-zones) formatting. You can then filter the reports in your own local timezone of choice based on that new metric.
+
+NOTE: the above is based on the "conversations_parquet" table if you want to use it on a different table you will need to adjust the column value to suit that table.
+
+
 Have fun building custom reports now!

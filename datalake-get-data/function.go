@@ -349,22 +349,11 @@ func cleanData(projectID, dataSetID, tableID, uuid, updateTimeStamp, newColumn, 
 	defer wg.Done()
 	// FULL NOTICE. I'm not a SQL developer the below was ill admit generated with help from AI. If there are improvments to this please do a PR'
 	sqlQuery := fmt.Sprintln("\n" +
-		"-- This query first cleans the table by removing older duplicate rows (limited to the 5000 latest rows),\n" +
-		"-- then adds and populates a new `DATETIME` column efficiently.\n" +
+		"-- This query cleans the table by removing older duplicate rows (limited to the 5000 latest rows),\n" +
 		"-- The BEGIN and END block treats all statements as a single, multi-statement script.\n" +
 		"BEGIN \n" +
 		" -- Part 1: Declare and set variables at the beginning of the script.\n" +
-		" DECLARE column_exists BOOL;\n" +
 		" DECLARE ts_cutoff INT64 DEFAULT 0; -- New variable for the 5000-row cutoff timestamp\n" +
-		" -- Check if the newColumn column already exists in the table's INFORMATION_SCHEMA.\n" +
-		" SET column_exists = (\n" +
-		"   SELECT\n" +
-		"     COUNT(*) > 0\n" +
-		"   FROM\n" +
-		"     `" + projectID + "." + dataSetID + "`.INFORMATION_SCHEMA.COLUMNS\n" +
-		"   WHERE\n" +
-		"     table_name = '" + tableID + "' AND column_name = '" + newColumn + "'\n" +
-		" );\n" +
 		"\n" +
 		" -- Determine the timestamp cutoff for limiting the deduplication scan.\n" +
 		" -- This finds the updateTimeStamp of the 5000th most recent row.\n" +
@@ -399,19 +388,6 @@ func cleanData(projectID, dataSetID, tableID, uuid, updateTimeStamp, newColumn, 
 		"       -- T2 must also be within the 5000-row cutoff block (for safety/consistency)\n" +
 		"       AND T2." + updateTimeStamp + " >= ts_cutoff\n" +
 		"   );\n" +
-		"\n" +
-		" -- Part 3: Add the new column if it doesn't already exist.\n" +
-		" IF NOT column_exists THEN\n" +
-		"     ALTER TABLE `" + projectID + "." + dataSetID + "." + tableID + "`\n" +
-		"     ADD COLUMN " + newColumn + " DATETIME;\n" +
-		" END IF;\n" +
-		"\n" +
-		" -- Part 4: Populate the new column with the DATETIME value. (OPTIMIZED)\n" +
-		" -- The WHERE clause ensures that only newly added rows (which have a NULL value\n" +
-		" -- in the new column) are processed, saving significant cost and time on subsequent runs.\n" +
-		" UPDATE `" + projectID + "." + dataSetID + "." + tableID + "`\n" +
-		" SET " + newColumn + " = DATETIME(TIMESTAMP_MILLIS(" + newColumnDataSource + "))\n" +
-		" WHERE " + newColumn + " IS NULL;\n" +
 		"\n" +
 		"END;")
 
