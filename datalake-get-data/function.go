@@ -134,16 +134,48 @@ func datalakeStart(ctx context.Context, e event.Event) error {
 	var wgSQL sync.WaitGroup
 	totalStartTimeSQL := time.Now()
 	for _, typ := range uniqueTypesFound {
-		// Check for specific table for now only doing conversations & segments tables
+		// Check for specific table and clean the data based on last 5000 rows in Db
 		if typ == "conversations" {
 			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.conversationId = T.conversationId"
 			wgSQL.Add(1)
-			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), "conversationId", "updateTimeStamp", "conversationStartDate", "conversationStart", &wgSQL)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "updateTimestamp", &wgSQL)
 		}
 		if typ == "segments" {
 			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.conversationId = T.conversationId AND T2.segmentId = T.segmentId"
 			wgSQL.Add(1)
-			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), "conversationId", "updateTimeStamp", "segmentStartDate", "segmentStart", &wgSQL)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "updateTimestamp", &wgSQL)
+		}
+		if typ == "participant-attributes" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.conversationId = T.conversationId AND T2.participantId = T.participantId AND T2.attributeName = T.attributeName"
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "eventTime", &wgSQL)
+		}
+		if typ == "conversation-metrics" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.conversationId = T.conversationId AND T2.sessionId = T.sessionId AND T2.metricName = T.metricName"
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "metricTimestamp", &wgSQL)
+		}
+		if typ == "flow-metrics" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.conversationId = T.conversationId AND T2.sessionId = T.sessionId AND T2.metricName = T.metricName"
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "metricTimestamp", &wgSQL)
+		}
+		if typ == "user-presence" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.userId = T.userId AND T.endTimestamp IS NULL"
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "startTimestamp", &wgSQL)
+		}
+		if typ == "agent-routing-status" {
+			fmt.Printf("cleaning tables in: %s_parquet\n", typ)
+			uuidString := "T2.userId = T.userId AND T.endTimestamp IS NULL"
+			wgSQL.Add(1)
+			go cleanData(projectID, datasetID, fmt.Sprintf("%s_parquet", typ), uuidString, "startTimestamp", &wgSQL)
 		}
 	}
 	wgSQL.Wait()
@@ -345,7 +377,7 @@ func deleteFolder(ctx context.Context, bucketName, folderPath string, wg *sync.W
 	return nil
 }
 
-func cleanData(projectID, dataSetID, tableID, uuid, updateTimeStamp, newColumn, newColumnDataSource string, wg *sync.WaitGroup) error {
+func cleanData(projectID, dataSetID, tableID, uuidString, updateTimeStamp string, wg *sync.WaitGroup) error {
 	defer wg.Done()
 	// FULL NOTICE. I'm not a SQL developer the below was ill admit generated with help from AI. If there are improvments to this please do a PR'
 	sqlQuery := fmt.Sprintln("\n" +
@@ -382,7 +414,8 @@ func cleanData(projectID, dataSetID, tableID, uuid, updateTimeStamp, newColumn, 
 		"     SELECT 1\n" +
 		"     FROM `" + projectID + "." + dataSetID + "." + tableID + "` AS T2\n" +
 		"     WHERE\n" +
-		"       T2." + uuid + " = T." + uuid + "\n" +
+		"       -- Match on one or more uuid\n" +
+		"      " + uuidString + "\n" +
 		"       -- T2 must have a strictly higher (newer) timestamp than T.\n" +
 		"       AND T2." + updateTimeStamp + " > T." + updateTimeStamp + "\n" +
 		"       -- T2 must also be within the 5000-row cutoff block (for safety/consistency)\n" +
